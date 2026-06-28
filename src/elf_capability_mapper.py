@@ -22,107 +22,88 @@ from elftools.elf.elffile import ELFFile
 CHUNK_SIZE = 65536
 PF_X = 0x1
 
-CAPABILITY_MAP: dict[str, dict[str, str]] = {
-    "ptrace": {
-        "severity": "MEDIUM",
-        "category": "anti-analysis",
-        "message": "Debugger-interaction capability may be present.",
-    },
-    "system": {
-        "severity": "MEDIUM",
-        "category": "command-execution",
-        "message": "Shell command execution capability may be present.",
-    },
-    "popen": {
-        "severity": "MEDIUM",
-        "category": "command-execution",
-        "message": "Command execution through a pipe may be present.",
-    },
-    "execve": {
-        "severity": "MEDIUM",
-        "category": "process-execution",
-        "message": "Direct process execution capability may be present.",
-    },
-    "execl": {
-        "severity": "MEDIUM",
-        "category": "process-execution",
-        "message": "Process execution capability may be present.",
-    },
-    "execvp": {
-        "severity": "MEDIUM",
-        "category": "process-execution",
-        "message": "Process execution capability may be present.",
-    },
-    "dlopen": {
-        "severity": "LOW",
-        "category": "dynamic-loading",
-        "message": "Runtime shared-library loading capability may be present.",
-    },
-    "dlsym": {
-        "severity": "LOW",
-        "category": "dynamic-loading",
-        "message": "Runtime symbol lookup capability may be present.",
-    },
-    "socket": {
-        "severity": "LOW",
-        "category": "networking",
-        "message": "Network socket capability may be present.",
-    },
-    "connect": {
-        "severity": "LOW",
-        "category": "networking",
-        "message": "Outbound network connection capability may be present.",
-    },
-    "send": {
-        "severity": "LOW",
-        "category": "networking",
-        "message": "Network data transmission capability may be present.",
-    },
-    "recv": {
-        "severity": "LOW",
-        "category": "networking",
-        "message": "Network data reception capability may be present.",
-    },
-    "mprotect": {
-        "severity": "MEDIUM",
-        "category": "memory-protection",
-        "message": "Memory-permission modification capability may be present.",
-    },
-}
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "indicators.json"
+REQUIRED_INDICATOR_FIELDS = {"severity", "category", "message"}
+
+CAPABILITY_MAP: dict[str, dict[str, str]] = {}
+STRING_INDICATOR_MAP: dict[str, dict[str, str]] = {}
 
 
-STRING_INDICATOR_MAP: dict[str, dict[str, str]] = {
-    "/proc/self/status": {
-        "severity": "MEDIUM",
-        "category": "anti-analysis",
-        "message": (
-            "Linux process-status path used in some debugger-detection "
-            "checks may be present."
-        ),
-    },
-    "LD_PRELOAD": {
-        "severity": "MEDIUM",
-        "category": "dynamic-loading",
-        "message": (
-            "Dynamic-loader environment-variable reference may be present."
-        ),
-    },
-    "/bin/sh": {
-        "severity": "MEDIUM",
-        "category": "command-execution",
-        "message": "Embedded shell-path reference may be present.",
-    },
-    "curl": {
-        "severity": "LOW",
-        "category": "retrieval-tool",
-        "message": "Reference to a download utility may be present.",
-    },
-    "wget": {
-        "severity": "LOW",
-        "category": "retrieval-tool",
-        "message": "Reference to a download utility may be present.",
-    },
-}
+def load_indicator_config(
+    config_path: Path,
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+    """Load and validate configurable symbol and string indicators."""
+    try:
+        raw_config = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ValueError(
+            f"Indicator configuration file was not found: {config_path}"
+        ) from error
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Indicator configuration is not valid JSON: {error}"
+        ) from error
+    except OSError as error:
+        raise ValueError(
+            f"Could not read indicator configuration: {error}"
+        ) from error
+
+    if not isinstance(raw_config, dict):
+        raise ValueError("Indicator configuration must contain a JSON object.")
+
+    required_sections = ("symbol_indicators", "string_indicators")
+    validated_sections: list[dict[str, dict[str, str]]] = []
+
+    for section_name in required_sections:
+        entries = raw_config.get(section_name)
+
+        if not isinstance(entries, dict):
+            raise ValueError(
+                f"Configuration section '{section_name}' must be an object."
+            )
+
+        validated_entries: dict[str, dict[str, str]] = {}
+
+        for marker, details in entries.items():
+            if not isinstance(marker, str) or not marker:
+                raise ValueError(
+                    f"Configuration section '{section_name}' contains "
+                    "an invalid indicator key."
+                )
+
+            if not isinstance(details, dict):
+                raise ValueError(
+                    f"Indicator '{marker}' in '{section_name}' must "
+                    "contain an object."
+                )
+
+            missing_fields = REQUIRED_INDICATOR_FIELDS - set(details)
+
+            if missing_fields:
+                raise ValueError(
+                    f"Indicator '{marker}' in '{section_name}' is missing: "
+                    f"{', '.join(sorted(missing_fields))}"
+                )
+
+            normalized_details: dict[str, str] = {}
+
+            for field in REQUIRED_INDICATOR_FIELDS:
+                value = details[field]
+
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"Indicator '{marker}' field '{field}' must "
+                        "contain non-empty text."
+                    )
+
+                normalized_details[field] = value
+
+            validated_entries[marker] = normalized_details
+
+        validated_sections.append(validated_entries)
+
+    return validated_sections[0], validated_sections[1]
 
 
 def calculate_sha256(path: Path) -> str:
@@ -477,11 +458,23 @@ def parse_arguments() -> argparse.Namespace:
         type=Path,
         help="Optional path for a JSON report.",
     )
+    parser.add_argument(
+        "--config",
+        dest="config_path",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help=(
+            "Path to the indicator configuration file. "
+            f"Default: {DEFAULT_CONFIG_PATH}"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     """Run the ELF static inspection."""
+    global CAPABILITY_MAP, STRING_INDICATOR_MAP
+
     args = parse_arguments()
     target = args.target
 
@@ -493,7 +486,13 @@ def main() -> int:
         return 2
 
     try:
+        CAPABILITY_MAP, STRING_INDICATOR_MAP = load_indicator_config(
+            args.config_path
+        )
         result = analyze_elf(target)
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        return 2
     except ELFError:
         print(
             f"Error: '{target}' is not a valid ELF file.",

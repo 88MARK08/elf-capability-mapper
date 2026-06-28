@@ -1,0 +1,96 @@
+{
+  "symbol_indicators": {
+    "ptrace": {
+      "severity": "MEDIUM",
+      "category": "anti-analysis",
+      "message": "Debugger-interaction capability may be present."
+    },
+    "system": {
+      "severity": "MEDIUM",
+      "category": "command-execution",
+      "message": "Shell command execution capability may be present."
+    },
+    "popen": {
+      "severity": "MEDIUM",
+      "category": "command-execution",
+      "message": "Command execution through a pipe may be present."
+    },
+    "execve": {
+      "severity": "MEDIUM",
+      "category": "process-execution",
+      "message": "Direct process execution capability may be present."
+    },
+    "execl": {
+      "severity": "MEDIUM",
+      "category": "process-execution",
+      "message": "Process execution capability may be present."
+    },
+    "execvp": {
+      "severity": "MEDIUM",
+      "category": "process-execution",
+      "message": "Process execution capability may be present."
+    },
+    "dlopen": {
+      "severity": "LOW",
+      "category": "dynamic-loading",
+      "message": "Runtime shared-library loading capability may be present."
+    },
+    "dlsym": {
+      "severity": "LOW",
+      "category": "dynamic-loading",
+      "message": "Runtime symbol lookup capability may be present."
+    },
+    "socket": {
+      "severity": "LOW",
+      "category": "networking",
+      "message": "Network socket capability may be present."
+    },
+    "connect": {
+      "severity": "LOW",
+      "category": "networking",
+      "message": "Outbound network connection capability may be present."
+    },
+    "send": {
+      "severity": "LOW",
+      "category": "networking",
+      "message": "Network data transmission capability may be present."
+    },
+    "recv": {
+      "severity": "LOW",
+      "category": "networking",
+      "message": "Network data reception capability may be present."
+    },
+    "mprotect": {
+      "severity": "MEDIUM",
+      "category": "memory-protection",
+      "message": "Memory-permission modification capability may be present."
+    }
+  },
+  "string_indicators": {
+    "/proc/self/status": {
+      "severity": "MEDIUM",
+      "category": "anti-analysis",
+      "message": "Linux process-status path used in some debugger-detection checks may be present."
+    },
+    "LD_PRELOAD": {
+      "severity": "MEDIUM",
+      "category": "dynamic-loading",
+      "message": "Dynamic-loader environment-variable reference may be present."
+    },
+    "/bin/sh": {
+      "severity": "MEDIUM",
+      "category": "command-execution",
+      "message": "Embedded shell-path reference may be present."
+    },
+    "curl": {
+      "severity": "LOW",
+      "category": "retrieval-tool",
+      "message": "Reference to a download utility may be present."
+    },
+    "wget": {
+      "severity": "LOW",
+      "category": "retrieval-tool",
+      "message": "Reference to a download utility may be present."
+    }
+  }
+}
