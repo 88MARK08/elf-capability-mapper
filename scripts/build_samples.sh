@@ -17,5 +17,12 @@ gcc -O0 -fno-builtin -fno-inline -fstack-protector-strong -Wall -Wextra \
   -ldl \
   -o "$BINARY_DIR/capability_demo"
 
+gcc -O0 -fno-builtin -fno-inline -Wall -Wextra \
+  "$SOURCE_DIR/string_indicator_demo.c" \
+  -o "$BINARY_DIR/string_indicator_demo"
+
 echo "Built sample binaries:"
-file "$BINARY_DIR/hello" "$BINARY_DIR/capability_demo"
+file \
+  "$BINARY_DIR/hello" \
+  "$BINARY_DIR/capability_demo" \
+  "$BINARY_DIR/string_indicator_demo"

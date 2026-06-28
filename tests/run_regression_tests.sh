@@ -21,15 +21,23 @@ mkdir -p "$OUT_DIR"
   "$ROOT_DIR/samples/bin/capability_demo" \
   --json "$OUT_DIR/capability_demo.json" >/dev/null
 
-"$PYTHON_BIN" - "$OUT_DIR/hello.json" "$OUT_DIR/capability_demo.json" <<'PY'
+"$PYTHON_BIN" "$SCANNER" \
+  "$ROOT_DIR/samples/bin/string_indicator_demo" \
+  --json "$OUT_DIR/string_indicator_demo.json" >/dev/null
+
+"$PYTHON_BIN" - \
+  "$OUT_DIR/hello.json" \
+  "$OUT_DIR/capability_demo.json" \
+  "$OUT_DIR/string_indicator_demo.json" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 hello = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 demo = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+string_demo = json.loads(Path(sys.argv[3]).read_text(encoding="utf-8"))
 
-expected_symbols = {
+expected_capability_symbols = {
     "ptrace",
     "system",
     "mprotect",
@@ -42,9 +50,22 @@ expected_symbols = {
     "recv",
 }
 
-actual_symbols = {
+expected_string_markers = {
+    "/proc/self/status",
+    "LD_PRELOAD",
+    "/bin/sh",
+    "curl",
+    "wget",
+}
+
+actual_capability_symbols = {
     indicator["symbol"]
     for indicator in demo["capability_indicators"]
+}
+
+actual_string_markers = {
+    indicator["string"]
+    for indicator in string_demo["embedded_string_indicators"]
 }
 
 if hello["capability_indicators"]:
@@ -52,15 +73,37 @@ if hello["capability_indicators"]:
         "Safe hello fixture unexpectedly produced capability indicators."
     )
 
-if actual_symbols != expected_symbols:
-    missing = sorted(expected_symbols - actual_symbols)
-    unexpected = sorted(actual_symbols - expected_symbols)
+if hello["embedded_string_indicators"]:
+    raise SystemExit(
+        "Safe hello fixture unexpectedly produced string indicators."
+    )
+
+if string_demo["capability_indicators"]:
+    raise SystemExit(
+        "String fixture unexpectedly produced capability indicators."
+    )
+
+if actual_capability_symbols != expected_capability_symbols:
+    missing = sorted(expected_capability_symbols - actual_capability_symbols)
+    unexpected = sorted(actual_capability_symbols - expected_capability_symbols)
     raise SystemExit(
         "Capability-indicator mismatch. "
         f"Missing: {missing}; Unexpected: {unexpected}"
     )
 
-for label, report in (("hello", hello), ("capability_demo", demo)):
+if actual_string_markers != expected_string_markers:
+    missing = sorted(expected_string_markers - actual_string_markers)
+    unexpected = sorted(actual_string_markers - expected_string_markers)
+    raise SystemExit(
+        "Embedded-string mismatch. "
+        f"Missing: {missing}; Unexpected: {unexpected}"
+    )
+
+for label, report in (
+    ("hello", hello),
+    ("capability_demo", demo),
+    ("string_indicator_demo", string_demo),
+):
     hardening = report["hardening"]
 
     if hardening["gnu_relro_segment"] is not True:
@@ -78,9 +121,15 @@ if hello["hardening"]["stack_canary_import"] is not False:
 if demo["hardening"]["stack_canary_import"] is not True:
     raise SystemExit("capability_demo: expected stack-canary import.")
 
+if string_demo["hardening"]["stack_canary_import"] is not False:
+    raise SystemExit(
+        "string_indicator_demo: unexpected stack-canary import."
+    )
+
 print(
     "Regression assertions passed: safe fixture has 0 indicators; "
-    "capability fixture has 10 expected indicators; "
+    "capability fixture has 10 expected imports; "
+    "string fixture has 5 expected markers; "
     "hardening signals matched expectations."
 )
 PY

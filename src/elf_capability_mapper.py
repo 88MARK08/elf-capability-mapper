@@ -91,6 +91,40 @@ CAPABILITY_MAP: dict[str, dict[str, str]] = {
 }
 
 
+STRING_INDICATOR_MAP: dict[str, dict[str, str]] = {
+    "/proc/self/status": {
+        "severity": "MEDIUM",
+        "category": "anti-analysis",
+        "message": (
+            "Linux process-status path used in some debugger-detection "
+            "checks may be present."
+        ),
+    },
+    "LD_PRELOAD": {
+        "severity": "MEDIUM",
+        "category": "dynamic-loading",
+        "message": (
+            "Dynamic-loader environment-variable reference may be present."
+        ),
+    },
+    "/bin/sh": {
+        "severity": "MEDIUM",
+        "category": "command-execution",
+        "message": "Embedded shell-path reference may be present.",
+    },
+    "curl": {
+        "severity": "LOW",
+        "category": "retrieval-tool",
+        "message": "Reference to a download utility may be present.",
+    },
+    "wget": {
+        "severity": "LOW",
+        "category": "retrieval-tool",
+        "message": "Reference to a download utility may be present.",
+    },
+}
+
+
 def calculate_sha256(path: Path) -> str:
     """Return the SHA-256 digest of a file."""
     digest = hashlib.sha256()
@@ -192,6 +226,55 @@ def map_capability_indicators(imports: list[str]) -> list[dict[str, str]]:
     )
 
 
+def file_contains_marker(path: Path, marker: str) -> bool:
+    """Check whether a byte marker appears in a file without loading it all."""
+    marker_bytes = marker.encode("utf-8")
+    overlap_size = max(len(marker_bytes) - 1, 0)
+    trailing_bytes = b""
+
+    with path.open("rb") as file_handle:
+        while chunk := file_handle.read(CHUNK_SIZE):
+            data = trailing_bytes + chunk
+
+            if marker_bytes in data:
+                return True
+
+            trailing_bytes = (
+                data[-overlap_size:] if overlap_size else b""
+            )
+
+    return False
+
+
+def map_embedded_string_indicators(path: Path) -> list[dict[str, str]]:
+    """Map selected embedded strings to cautious analyst-facing indicators."""
+    indicators: list[dict[str, str]] = []
+
+    for marker, details in STRING_INDICATOR_MAP.items():
+        if not file_contains_marker(path, marker):
+            continue
+
+        indicators.append(
+            {
+                "severity": details["severity"],
+                "category": details["category"],
+                "string": marker,
+                "message": details["message"],
+            }
+        )
+
+    severity_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+
+    return sorted(
+        indicators,
+        key=lambda item: (
+            severity_order.get(item["severity"], 99),
+            item["category"],
+            item["string"],
+        ),
+    )
+
+
 def get_hardening_signals(
     elf: ELFFile,
     imports: list[str],
@@ -236,6 +319,7 @@ def analyze_elf(path: Path) -> dict[str, Any]:
         elf = ELFFile(file_handle)
         interpreter = get_interpreter(elf)
         imports = get_dynamic_imports(elf)
+        string_indicators = map_embedded_string_indicators(path)
 
         return {
             "file": str(path),
@@ -253,6 +337,7 @@ def analyze_elf(path: Path) -> dict[str, Any]:
             "import_count": len(imports),
             "imported_symbols": imports,
             "capability_indicators": map_capability_indicators(imports),
+            "embedded_string_indicators": string_indicators,
             "hardening": get_hardening_signals(
                 elf,
                 imports,
@@ -347,6 +432,27 @@ def format_report(result: dict[str, Any]) -> str:
                 "  - "
                 f"[{indicator['severity']}] "
                 f"{indicator['category']} via {indicator['symbol']}: "
+                f"{indicator['message']}"
+            )
+
+    string_indicators = result["embedded_string_indicators"]
+
+    lines.extend(
+        [
+            "",
+            "Embedded String Indicators:",
+        ]
+    )
+
+    if not string_indicators:
+        lines.append("  - No selected embedded-string indicators detected.")
+    else:
+        for indicator in string_indicators:
+            lines.append(
+                "  - "
+                f"[{indicator['severity']}] "
+                f"{indicator['category']} via string "
+                f"{indicator['string']!r}: "
                 f"{indicator['message']}"
             )
 
