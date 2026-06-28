@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ELF Capability Mapper
-Stage 2: Static ELF metadata, imports, and capability indicators.
+Stage 3: Static metadata, imports, capability indicators, and hardening signals.
 
 This tool reads ELF files without executing them.
 """
@@ -20,6 +20,7 @@ from elftools.elf.elffile import ELFFile
 
 
 CHUNK_SIZE = 65536
+PF_X = 0x1
 
 CAPABILITY_MAP: dict[str, dict[str, str]] = {
     "ptrace": {
@@ -110,6 +111,7 @@ def get_interpreter(elf: ELFFile) -> str | None:
                 "utf-8",
                 errors="replace",
             )
+
     return None
 
 
@@ -160,7 +162,7 @@ def get_dynamic_imports(elf: ELFFile) -> list[str]:
 
 
 def map_capability_indicators(imports: list[str]) -> list[dict[str, str]]:
-    """Map selected imports to cautious analyst-facing capability indicators."""
+    """Map selected imports to cautious analyst-facing indicators."""
     indicators: list[dict[str, str]] = []
 
     for symbol_name in imports:
@@ -190,15 +192,50 @@ def map_capability_indicators(imports: list[str]) -> list[dict[str, str]]:
     )
 
 
+def get_hardening_signals(
+    elf: ELFFile,
+    imports: list[str],
+    interpreter: str | None,
+) -> dict[str, Any]:
+    """Collect cautious hardening-related signals from ELF metadata."""
+    has_gnu_relro = False
+    gnu_stack_flags: int | None = None
+
+    for segment in elf.iter_segments():
+        segment_type = str(segment["p_type"])
+
+        if segment_type == "PT_GNU_RELRO":
+            has_gnu_relro = True
+
+        if segment_type == "PT_GNU_STACK":
+            gnu_stack_flags = int(segment["p_flags"])
+
+    executable_stack = (
+        None
+        if gnu_stack_flags is None
+        else bool(gnu_stack_flags & PF_X)
+    )
+
+    elf_type = str(elf["e_type"])
+    pie_candidate = elf_type == "ET_DYN" and interpreter is not None
+
+    return {
+        "gnu_relro_segment": has_gnu_relro,
+        "executable_stack": executable_stack,
+        "stack_canary_import": "__stack_chk_fail" in imports,
+        "pie_candidate": pie_candidate,
+    }
+
+
 def analyze_elf(path: Path) -> dict[str, Any]:
-    """Collect static metadata, imports, and capability indicators."""
+    """Collect static ELF metadata, imports, indicators, and hardening."""
     file_size = path.stat().st_size
     file_hash = calculate_sha256(path)
 
     with path.open("rb") as file_handle:
         elf = ELFFile(file_handle)
+        interpreter = get_interpreter(elf)
         imports = get_dynamic_imports(elf)
-        indicators = map_capability_indicators(imports)
 
         return {
             "file": str(path),
@@ -211,16 +248,34 @@ def analyze_elf(path: Path) -> dict[str, Any]:
             "architecture": str(elf["e_machine"]),
             "elf_type": str(elf["e_type"]),
             "entry_point": f"0x{elf['e_entry']:x}",
-            "interpreter": get_interpreter(elf),
+            "interpreter": interpreter,
             "needed_libraries": get_needed_libraries(elf),
             "import_count": len(imports),
             "imported_symbols": imports,
-            "capability_indicators": indicators,
+            "capability_indicators": map_capability_indicators(imports),
+            "hardening": get_hardening_signals(
+                elf,
+                imports,
+                interpreter,
+            ),
         }
+
+
+def format_stack_status(executable_stack: bool | None) -> str:
+    """Return a readable executable-stack status."""
+    if executable_stack is None:
+        return "Not specified"
+
+    if executable_stack:
+        return "Executable (review recommended)"
+
+    return "Non-executable"
 
 
 def format_report(result: dict[str, Any]) -> str:
     """Format scan results for the terminal."""
+    hardening = result["hardening"]
+
     lines = [
         "ELF Capability Mapper — Static Analysis Report",
         "=" * 48,
@@ -250,6 +305,32 @@ def format_report(result: dict[str, Any]) -> str:
 
     lines.extend(
         [
+            "",
+            "Hardening Signals:",
+            (
+                "  - GNU RELRO segment: "
+                + ("Present" if hardening["gnu_relro_segment"] else "Not detected")
+            ),
+            (
+                "  - Stack marking: "
+                + format_stack_status(hardening["executable_stack"])
+            ),
+            (
+                "  - Stack canary import: "
+                + (
+                    "Present"
+                    if hardening["stack_canary_import"]
+                    else "Not detected"
+                )
+            ),
+            (
+                "  - PIE candidate: "
+                + (
+                    "Yes (ET_DYN with interpreter)"
+                    if hardening["pie_candidate"]
+                    else "No"
+                )
+            ),
             "",
             f"Dynamic Imports: {result['import_count']}",
             "Capability Indicators:",
