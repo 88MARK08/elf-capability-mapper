@@ -4,3 +4,5 @@ __pycache__/
 results/*.json
 samples/bin/*
 !samples/bin/.gitkeep
+tests/out/*
+!tests/out/.gitkeep

@@ -12,7 +12,7 @@ gcc -O0 -fno-builtin -fno-inline -Wall -Wextra \
   "$SOURCE_DIR/hello.c" \
   -o "$BINARY_DIR/hello"
 
-gcc -O0 -fno-builtin -fno-inline -Wall -Wextra \
+gcc -O0 -fno-builtin -fno-inline -fstack-protector-strong -Wall -Wextra \
   "$SOURCE_DIR/capability_demo.c" \
   -ldl \
   -o "$BINARY_DIR/capability_demo"
