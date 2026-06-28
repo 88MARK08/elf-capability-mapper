@@ -68,6 +68,41 @@ actual_string_markers = {
     for indicator in string_demo["embedded_string_indicators"]
 }
 
+expected_summaries = {
+    "hello": {
+        "import_indicator_count": 0,
+        "embedded_string_indicator_count": 0,
+        "total_indicator_count": 0,
+        "severity_counts": {"HIGH": 0, "MEDIUM": 0, "LOW": 0},
+    },
+    "capability_demo": {
+        "import_indicator_count": 10,
+        "embedded_string_indicator_count": 0,
+        "total_indicator_count": 10,
+        "severity_counts": {"HIGH": 0, "MEDIUM": 4, "LOW": 6},
+    },
+    "string_indicator_demo": {
+        "import_indicator_count": 0,
+        "embedded_string_indicator_count": 5,
+        "total_indicator_count": 5,
+        "severity_counts": {"HIGH": 0, "MEDIUM": 3, "LOW": 2},
+    },
+}
+
+for label, report in (
+    ("hello", hello),
+    ("capability_demo", demo),
+    ("string_indicator_demo", string_demo),
+):
+    actual_summary = report.get("analysis_summary")
+    expected_summary = expected_summaries[label]
+
+    if actual_summary != expected_summary:
+        raise SystemExit(
+            f"{label}: analysis-summary mismatch. "
+            f"Expected {expected_summary}; received {actual_summary}"
+        )
+
 if hello["capability_indicators"]:
     raise SystemExit(
         "Safe hello fixture unexpectedly produced capability indicators."

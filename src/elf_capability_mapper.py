@@ -256,6 +256,33 @@ def map_embedded_string_indicators(path: Path) -> list[dict[str, str]]:
     )
 
 
+def build_analysis_summary(
+    capability_indicators: list[dict[str, str]],
+    string_indicators: list[dict[str, str]],
+) -> dict[str, Any]:
+    """Return counts that help an analyst review selected static indicators."""
+    severity_counts = {
+        "HIGH": 0,
+        "MEDIUM": 0,
+        "LOW": 0,
+    }
+
+    for indicator in capability_indicators + string_indicators:
+        severity = indicator["severity"]
+
+        if severity in severity_counts:
+            severity_counts[severity] += 1
+
+    return {
+        "import_indicator_count": len(capability_indicators),
+        "embedded_string_indicator_count": len(string_indicators),
+        "total_indicator_count": (
+            len(capability_indicators) + len(string_indicators)
+        ),
+        "severity_counts": severity_counts,
+    }
+
+
 def get_hardening_signals(
     elf: ELFFile,
     imports: list[str],
@@ -300,7 +327,12 @@ def analyze_elf(path: Path) -> dict[str, Any]:
         elf = ELFFile(file_handle)
         interpreter = get_interpreter(elf)
         imports = get_dynamic_imports(elf)
+        capability_indicators = map_capability_indicators(imports)
         string_indicators = map_embedded_string_indicators(path)
+        analysis_summary = build_analysis_summary(
+            capability_indicators,
+            string_indicators,
+        )
 
         return {
             "file": str(path),
@@ -317,8 +349,9 @@ def analyze_elf(path: Path) -> dict[str, Any]:
             "needed_libraries": get_needed_libraries(elf),
             "import_count": len(imports),
             "imported_symbols": imports,
-            "capability_indicators": map_capability_indicators(imports),
+            "capability_indicators": capability_indicators,
             "embedded_string_indicators": string_indicators,
+            "analysis_summary": analysis_summary,
             "hardening": get_hardening_signals(
                 elf,
                 imports,
@@ -341,6 +374,7 @@ def format_stack_status(executable_stack: bool | None) -> str:
 def format_report(result: dict[str, Any]) -> str:
     """Format scan results for the terminal."""
     hardening = result["hardening"]
+    summary = result["analysis_summary"]
 
     lines = [
         "ELF Capability Mapper — Static Analysis Report",
@@ -397,6 +431,27 @@ def format_report(result: dict[str, Any]) -> str:
                     else "No"
                 )
             ),
+            "",
+            "Analyst Summary:",
+            (
+                "  - Import-based indicators: "
+                f"{summary['import_indicator_count']}"
+            ),
+            (
+                "  - Embedded-string indicators: "
+                f"{summary['embedded_string_indicator_count']}"
+            ),
+            (
+                "  - Total selected indicators: "
+                f"{summary['total_indicator_count']}"
+            ),
+            (
+                "  - Severity counts: "
+                f"HIGH {summary['severity_counts']['HIGH']} | "
+                f"MEDIUM {summary['severity_counts']['MEDIUM']} | "
+                f"LOW {summary['severity_counts']['LOW']}"
+            ),
+            "  - Note: Static indicators require analyst review and context.",
             "",
             f"Dynamic Imports: {result['import_count']}",
             "Capability Indicators:",
