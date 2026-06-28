@@ -1,0 +1,9 @@
+{
+  "symbol_indicators": {
+    "puts": {
+      "severity": "LOW",
+      "category": "output"
+    }
+  },
+  "string_indicators": {}
+}

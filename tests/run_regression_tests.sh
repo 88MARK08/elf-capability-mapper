@@ -149,4 +149,28 @@ if [[ "$non_elf_output" != *"not a valid ELF file"* ]]; then
   exit 1
 fi
 
+
+INVALID_CONFIG="$ROOT_DIR/tests/fixtures/invalid-indicators.json"
+
+set +e
+invalid_config_output="$(
+  "$PYTHON_BIN" "$SCANNER" \
+    "$ROOT_DIR/samples/bin/hello" \
+    --config "$INVALID_CONFIG" 2>&1
+)"
+invalid_config_status=$?
+set -e
+
+if [[ "$invalid_config_status" -ne 2 ]]; then
+  echo "Expected invalid-config exit code 2, received $invalid_config_status." >&2
+  exit 1
+fi
+
+if [[ "$invalid_config_output" != *"is missing: message"* ]]; then
+  echo "Expected invalid-config validation message was not found." >&2
+  exit 1
+fi
+
+echo "Malformed configuration rejection test passed."
+
 echo "Regression test passed."
