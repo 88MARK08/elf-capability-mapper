@@ -495,6 +495,149 @@ def format_report(result: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_markdown_report(result: dict[str, Any]) -> str:
+    """Format static-analysis results as a Markdown report."""
+    hardening = result["hardening"]
+    summary = result["analysis_summary"]
+
+    lines = [
+        "# ELF Capability Mapper Report",
+        "",
+        "## File Metadata",
+        "",
+        f"- **File:** `{result['file']}`",
+        f"- **SHA-256:** `{result['sha256']}`",
+        f"- **Size:** {result['size_bytes']} bytes",
+        f"- **ELF Class:** {result['elf_class']}",
+        f"- **Endianness:** {result['endianness']}",
+        f"- **Architecture:** {result['architecture']}",
+        f"- **ELF Type:** {result['elf_type']}",
+        f"- **Entry Point:** `{result['entry_point']}`",
+        (
+            f"- **Interpreter:** `{result['interpreter']}`"
+            if result["interpreter"]
+            else "- **Interpreter:** None detected"
+        ),
+        "",
+        "## Needed Shared Libraries",
+        "",
+    ]
+
+    libraries = result["needed_libraries"]
+
+    if libraries:
+        lines.extend(f"- `{library}`" for library in libraries)
+    else:
+        lines.append("- None detected")
+
+    lines.extend(
+        [
+            "",
+            "## Hardening Signals",
+            "",
+            (
+                "- **GNU RELRO segment:** "
+                + (
+                    "Present"
+                    if hardening["gnu_relro_segment"]
+                    else "Not detected"
+                )
+            ),
+            (
+                "- **Executable stack:** "
+                + (
+                    "Yes — review recommended"
+                    if hardening["executable_stack"] is True
+                    else (
+                        "No"
+                        if hardening["executable_stack"] is False
+                        else "Not specified"
+                    )
+                )
+            ),
+            (
+                "- **Stack canary import:** "
+                + (
+                    "Present"
+                    if hardening["stack_canary_import"]
+                    else "Not detected"
+                )
+            ),
+            (
+                "- **PIE candidate:** "
+                + (
+                    "Yes"
+                    if hardening["pie_candidate"]
+                    else "No"
+                )
+            ),
+            "",
+            "## Analyst Summary",
+            "",
+            (
+                "- **Import-based indicators:** "
+                f"{summary['import_indicator_count']}"
+            ),
+            (
+                "- **Embedded-string indicators:** "
+                f"{summary['embedded_string_indicator_count']}"
+            ),
+            (
+                "- **Total selected indicators:** "
+                f"{summary['total_indicator_count']}"
+            ),
+            (
+                "- **Severity counts:** "
+                f"HIGH {summary['severity_counts']['HIGH']} | "
+                f"MEDIUM {summary['severity_counts']['MEDIUM']} | "
+                f"LOW {summary['severity_counts']['LOW']}"
+            ),
+            "",
+            "Static indicators require analyst review and context. "
+            "They do not establish that a binary is malicious.",
+            "",
+            "## Import-Based Capability Indicators",
+            "",
+        ]
+    )
+
+    capability_indicators = result["capability_indicators"]
+
+    if not capability_indicators:
+        lines.append("- No selected capability indicators detected.")
+    else:
+        for indicator in capability_indicators:
+            lines.append(
+                f"- **[{indicator['severity']}] "
+                f"{indicator['category']} via "
+                f"`{indicator['symbol']}`:** "
+                f"{indicator['message']}"
+            )
+
+    lines.extend(
+        [
+            "",
+            "## Embedded String Indicators",
+            "",
+        ]
+    )
+
+    string_indicators = result["embedded_string_indicators"]
+
+    if not string_indicators:
+        lines.append("- No selected embedded-string indicators detected.")
+    else:
+        for indicator in string_indicators:
+            lines.append(
+                f"- **[{indicator['severity']}] "
+                f"{indicator['category']} via string "
+                f"`{indicator['string']}`:** "
+                f"{indicator['message']}"
+            )
+
+    return "\n".join(lines) + "\n"
+
+
 def parse_arguments() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -522,6 +665,12 @@ def parse_arguments() -> argparse.Namespace:
             "Path to the indicator configuration file. "
             f"Default: {DEFAULT_CONFIG_PATH}"
         ),
+    )
+    parser.add_argument(
+        "--markdown",
+        dest="markdown_output",
+        type=Path,
+        help="Optional path for a Markdown report.",
     )
     return parser.parse_args()
 
@@ -570,6 +719,14 @@ def main() -> int:
             encoding="utf-8",
         )
         print(f"\nJSON report saved to: {args.json_output}")
+
+    if args.markdown_output:
+        args.markdown_output.parent.mkdir(parents=True, exist_ok=True)
+        args.markdown_output.write_text(
+            format_markdown_report(result),
+            encoding="utf-8",
+        )
+        print(f"Markdown report saved to: {args.markdown_output}")
 
     return 0
 

@@ -6,3 +6,4 @@ samples/bin/*
 !samples/bin/.gitkeep
 tests/out/*
 !tests/out/.gitkeep
+results/*.md

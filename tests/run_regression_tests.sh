@@ -19,7 +19,8 @@ mkdir -p "$OUT_DIR"
 
 "$PYTHON_BIN" "$SCANNER" \
   "$ROOT_DIR/samples/bin/capability_demo" \
-  --json "$OUT_DIR/capability_demo.json" >/dev/null
+  --json "$OUT_DIR/capability_demo.json" \
+  --markdown "$OUT_DIR/capability_demo.md" >/dev/null
 
 "$PYTHON_BIN" "$SCANNER" \
   "$ROOT_DIR/samples/bin/string_indicator_demo" \
@@ -168,6 +169,18 @@ print(
     "hardening signals matched expectations."
 )
 PY
+
+MARKDOWN_REPORT="$OUT_DIR/capability_demo.md"
+
+for required_text in   "# ELF Capability Mapper Report"   "## Hardening Signals"   "## Analyst Summary"   "## Import-Based Capability Indicators"   "## Embedded String Indicators"   "ptrace"   "Static indicators require analyst review and context."
+do
+  if ! grep -Fq "$required_text" "$MARKDOWN_REPORT"; then
+    echo "Markdown report is missing expected text: $required_text" >&2
+    exit 1
+  fi
+done
+
+echo "Markdown-report generation test passed."
 
 set +e
 non_elf_output="$("$PYTHON_BIN" "$SCANNER" README.md 2>&1)"
