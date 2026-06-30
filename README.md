@@ -36,7 +36,7 @@ ELF Capability Mapper does not replace those tools. It provides a small, reprodu
 - Basic hardening-related signals
 - JSON and Markdown output for review or automation
 
-The project is intended as an initial triage aid and a teaching-oriented example of ELF parsing, not as a full malware classifier or reverse-engineering suite.
+The project provides a reproducible workflow for preliminary static analysis of Linux ELF binaries. It complements, rather than replaces, full malware-analysis and reverse-engineering platforms.
 
 ## Features
 
