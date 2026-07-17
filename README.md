@@ -421,3 +421,22 @@ ChatGPT was used during development for grammar refinement, documentation editin
 ## Author
 
 Markjoe Uba
+
+## Peer-Review Refinements
+
+Based on peer-review feedback, the tool was updated to improve analyst traceability, string matching, and scan transparency.
+
+Changes made:
+
+- Added `--verbose` mode to show which configuration file was loaded, how many indicators were loaded, how many imports were scanned, and which indicators matched.
+- Updated embedded-string scanning so all configured string indicators are checked in one file-read pass instead of reopening the file once per string.
+- Added file offsets for embedded-string findings so analysts have a starting point for follow-up review.
+- Added optional case-insensitive matching for string indicators through `config/indicators.json`.
+- Expanded regression tests to cover string offsets, case-insensitive matching, verbose output, Markdown report generation, hardening signals, invalid configuration handling, and non-ELF input handling.
+
+Feedback not implemented:
+
+- SPDX and CycloneDX validation were not added because the tool does not generate an SBOM. The refinement instead strengthens validation around the tool's own indicator configuration and report behavior.
+- CLI color output was deferred because it is helpful but not necessary for the main analysis workflow.
+
+These updates keep the tool focused on static ELF analysis while making the findings easier to interpret and easier to follow up during reverse engineering.
