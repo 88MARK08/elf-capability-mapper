@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 ELF Capability Mapper
-Stage 3: Static metadata, imports, capability indicators, and hardening signals.
 
-This tool reads ELF files without executing them.
+Static Linux ELF analysis for analyst-facing capability indicators.
+The tool reads ELF files without executing them.
 """
 
 from __future__ import annotations
@@ -27,13 +27,13 @@ DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "indicators.json"
 REQUIRED_INDICATOR_FIELDS = {"severity", "category", "message"}
 
 CAPABILITY_MAP: dict[str, dict[str, str]] = {}
-STRING_INDICATOR_MAP: dict[str, dict[str, str]] = {}
+STRING_INDICATOR_MAP: dict[str, dict[str, Any]] = {}
 
 
 def load_indicator_config(
     config_path: Path,
-) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
-    """Load and validate configurable symbol and string indicators."""
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
+    """Load and validate symbol and string indicator configuration."""
     try:
         raw_config = json.loads(config_path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
@@ -52,58 +52,90 @@ def load_indicator_config(
     if not isinstance(raw_config, dict):
         raise ValueError("Indicator configuration must contain a JSON object.")
 
-    required_sections = ("symbol_indicators", "string_indicators")
-    validated_sections: list[dict[str, dict[str, str]]] = []
+    symbol_entries = raw_config.get("symbol_indicators")
+    string_entries = raw_config.get("string_indicators")
 
-    for section_name in required_sections:
-        entries = raw_config.get(section_name)
+    if not isinstance(symbol_entries, dict):
+        raise ValueError(
+            "Configuration section 'symbol_indicators' must be an object."
+        )
 
-        if not isinstance(entries, dict):
+    if not isinstance(string_entries, dict):
+        raise ValueError(
+            "Configuration section 'string_indicators' must be an object."
+        )
+
+    validated_symbols = validate_indicator_section(
+        symbol_entries,
+        "symbol_indicators",
+        allow_case_sensitive=False,
+    )
+
+    validated_strings = validate_indicator_section(
+        string_entries,
+        "string_indicators",
+        allow_case_sensitive=True,
+    )
+
+    return validated_symbols, validated_strings
+
+
+def validate_indicator_section(
+    entries: dict[str, Any],
+    section_name: str,
+    allow_case_sensitive: bool,
+) -> dict[str, dict[str, Any]]:
+    """Validate one configuration section."""
+    validated_entries: dict[str, dict[str, Any]] = {}
+
+    for marker, details in entries.items():
+        if not isinstance(marker, str) or not marker:
             raise ValueError(
-                f"Configuration section '{section_name}' must be an object."
+                f"Configuration section '{section_name}' contains "
+                "an invalid indicator key."
             )
 
-        validated_entries: dict[str, dict[str, str]] = {}
+        if not isinstance(details, dict):
+            raise ValueError(
+                f"Indicator '{marker}' in '{section_name}' must "
+                "contain an object."
+            )
 
-        for marker, details in entries.items():
-            if not isinstance(marker, str) or not marker:
+        missing_fields = REQUIRED_INDICATOR_FIELDS - set(details)
+
+        if missing_fields:
+            raise ValueError(
+                f"Indicator '{marker}' in '{section_name}' is missing: "
+                f"{', '.join(sorted(missing_fields))}"
+            )
+
+        normalized_details: dict[str, Any] = {}
+
+        for field in REQUIRED_INDICATOR_FIELDS:
+            value = details[field]
+
+            if not isinstance(value, str) or not value.strip():
                 raise ValueError(
-                    f"Configuration section '{section_name}' contains "
-                    "an invalid indicator key."
+                    f"Indicator '{marker}' field '{field}' must "
+                    "contain non-empty text."
                 )
 
-            if not isinstance(details, dict):
+            normalized_details[field] = value
+
+        if allow_case_sensitive:
+            case_sensitive = details.get("case_sensitive", True)
+
+            if not isinstance(case_sensitive, bool):
                 raise ValueError(
-                    f"Indicator '{marker}' in '{section_name}' must "
-                    "contain an object."
+                    f"Indicator '{marker}' field 'case_sensitive' must "
+                    "be true or false."
                 )
 
-            missing_fields = REQUIRED_INDICATOR_FIELDS - set(details)
+            normalized_details["case_sensitive"] = case_sensitive
 
-            if missing_fields:
-                raise ValueError(
-                    f"Indicator '{marker}' in '{section_name}' is missing: "
-                    f"{', '.join(sorted(missing_fields))}"
-                )
+        validated_entries[marker] = normalized_details
 
-            normalized_details: dict[str, str] = {}
-
-            for field in REQUIRED_INDICATOR_FIELDS:
-                value = details[field]
-
-                if not isinstance(value, str) or not value.strip():
-                    raise ValueError(
-                        f"Indicator '{marker}' field '{field}' must "
-                        "contain non-empty text."
-                    )
-
-                normalized_details[field] = value
-
-            validated_entries[marker] = normalized_details
-
-        validated_sections.append(validated_entries)
-
-    return validated_sections[0], validated_sections[1]
+    return validated_entries
 
 
 def calculate_sha256(path: Path) -> str:
@@ -177,7 +209,7 @@ def get_dynamic_imports(elf: ELFFile) -> list[str]:
 
 
 def map_capability_indicators(imports: list[str]) -> list[dict[str, str]]:
-    """Map selected imports to cautious analyst-facing indicators."""
+    """Map selected imports to analyst-facing capability indicators."""
     indicators: list[dict[str, str]] = []
 
     for symbol_name in imports:
@@ -207,40 +239,94 @@ def map_capability_indicators(imports: list[str]) -> list[dict[str, str]]:
     )
 
 
-def file_contains_marker(path: Path, marker: str) -> bool:
-    """Check whether a byte marker appears in a file without loading it all."""
-    marker_bytes = marker.encode("utf-8")
-    overlap_size = max(len(marker_bytes) - 1, 0)
+def find_all_offsets(data: bytes, pattern: bytes) -> list[int]:
+    """Return every offset of pattern within data."""
+    offsets: list[int] = []
+    start = 0
+
+    while True:
+        index = data.find(pattern, start)
+
+        if index == -1:
+            break
+
+        offsets.append(index)
+        start = index + 1
+
+    return offsets
+
+
+def map_embedded_string_indicators(path: Path) -> list[dict[str, Any]]:
+    """Find configured embedded strings in one file-read pass."""
+    if not STRING_INDICATOR_MAP:
+        return []
+
+    prepared_markers: list[dict[str, Any]] = []
+
+    for marker, details in STRING_INDICATOR_MAP.items():
+        marker_bytes = marker.encode("utf-8")
+        case_sensitive = bool(details.get("case_sensitive", True))
+
+        prepared_markers.append(
+            {
+                "marker": marker,
+                "marker_bytes": marker_bytes,
+                "search_bytes": (
+                    marker_bytes if case_sensitive else marker_bytes.lower()
+                ),
+                "case_sensitive": case_sensitive,
+                "details": details,
+                "offsets": set(),
+            }
+        )
+
+    max_marker_length = max(
+        len(item["marker_bytes"]) for item in prepared_markers
+    )
+    overlap_size = max_marker_length - 1
     trailing_bytes = b""
+    bytes_read = 0
 
     with path.open("rb") as file_handle:
         while chunk := file_handle.read(CHUNK_SIZE):
             data = trailing_bytes + chunk
+            data_start_offset = bytes_read - len(trailing_bytes)
+            bytes_read += len(chunk)
 
-            if marker_bytes in data:
-                return True
+            for item in prepared_markers:
+                case_sensitive = item["case_sensitive"]
+                search_data = data if case_sensitive else data.lower()
 
-            trailing_bytes = (
-                data[-overlap_size:] if overlap_size else b""
-            )
+                for relative_offset in find_all_offsets(
+                    search_data,
+                    item["search_bytes"],
+                ):
+                    absolute_offset = data_start_offset + relative_offset
 
-    return False
+                    if absolute_offset >= 0:
+                        item["offsets"].add(absolute_offset)
 
+            trailing_bytes = data[-overlap_size:] if overlap_size else b""
 
-def map_embedded_string_indicators(path: Path) -> list[dict[str, str]]:
-    """Map selected embedded strings to cautious analyst-facing indicators."""
-    indicators: list[dict[str, str]] = []
+    indicators: list[dict[str, Any]] = []
 
-    for marker, details in STRING_INDICATOR_MAP.items():
-        if not file_contains_marker(path, marker):
+    for item in prepared_markers:
+        offsets = sorted(item["offsets"])
+
+        if not offsets:
             continue
+
+        details = item["details"]
 
         indicators.append(
             {
                 "severity": details["severity"],
                 "category": details["category"],
-                "string": marker,
+                "string": item["marker"],
                 "message": details["message"],
+                "case_sensitive": item["case_sensitive"],
+                "file_offsets": [f"0x{offset:x}" for offset in offsets],
+                "match_count": len(offsets),
             }
         )
 
@@ -258,9 +344,9 @@ def map_embedded_string_indicators(path: Path) -> list[dict[str, str]]:
 
 def build_analysis_summary(
     capability_indicators: list[dict[str, str]],
-    string_indicators: list[dict[str, str]],
+    string_indicators: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Return counts that help an analyst review selected static indicators."""
+    """Return counts that help an analyst review selected indicators."""
     severity_counts = {
         "HIGH": 0,
         "MEDIUM": 0,
@@ -288,7 +374,7 @@ def get_hardening_signals(
     imports: list[str],
     interpreter: str | None,
 ) -> dict[str, Any]:
-    """Collect cautious hardening-related signals from ELF metadata."""
+    """Collect hardening-related signals from ELF metadata."""
     has_gnu_relro = False
     gnu_stack_flags: int | None = None
 
@@ -318,7 +404,7 @@ def get_hardening_signals(
     }
 
 
-def analyze_elf(path: Path) -> dict[str, Any]:
+def analyze_elf(path: Path, config_path: Path) -> dict[str, Any]:
     """Collect static ELF metadata, imports, indicators, and hardening."""
     file_size = path.stat().st_size
     file_hash = calculate_sha256(path)
@@ -357,6 +443,11 @@ def analyze_elf(path: Path) -> dict[str, Any]:
                 imports,
                 interpreter,
             ),
+            "configuration": {
+                "path": str(config_path),
+                "symbol_indicator_count": len(CAPABILITY_MAP),
+                "string_indicator_count": len(STRING_INDICATOR_MAP),
+            },
         }
 
 
@@ -473,24 +564,76 @@ def format_report(result: dict[str, Any]) -> str:
 
     string_indicators = result["embedded_string_indicators"]
 
-    lines.extend(
-        [
-            "",
-            "Embedded String Indicators:",
-        ]
-    )
+    lines.extend(["", "Embedded String Indicators:"])
 
     if not string_indicators:
         lines.append("  - No selected embedded-string indicators detected.")
     else:
         for indicator in string_indicators:
+            offsets = ", ".join(indicator["file_offsets"])
+            case_text = (
+                "case-sensitive"
+                if indicator["case_sensitive"]
+                else "case-insensitive"
+            )
             lines.append(
                 "  - "
                 f"[{indicator['severity']}] "
                 f"{indicator['category']} via string "
                 f"{indicator['string']!r}: "
-                f"{indicator['message']}"
+                f"{indicator['message']} "
+                f"(matches: {indicator['match_count']}; "
+                f"offsets: {offsets}; {case_text})"
             )
+
+    return "\n".join(lines)
+
+
+def format_verbose_report(result: dict[str, Any]) -> str:
+    """Format optional verbose scan details."""
+    config = result["configuration"]
+
+    lines = [
+        "Verbose Scan Details",
+        "=" * 48,
+        f"Configuration file: {config['path']}",
+        f"Symbol indicators loaded: {config['symbol_indicator_count']}",
+        f"String indicators loaded: {config['string_indicator_count']}",
+        f"Dynamic imports scanned: {result['import_count']}",
+        (
+            "Capability indicators matched: "
+            f"{len(result['capability_indicators'])}"
+        ),
+        (
+            "Embedded-string indicators matched: "
+            f"{len(result['embedded_string_indicators'])}"
+        ),
+        "",
+        "Matched imported symbols:",
+    ]
+
+    if result["capability_indicators"]:
+        for indicator in result["capability_indicators"]:
+            lines.append(
+                f"  - {indicator['symbol']} "
+                f"({indicator['category']}, {indicator['severity']})"
+            )
+    else:
+        lines.append("  - None")
+
+    lines.append("")
+    lines.append("Matched embedded strings:")
+
+    if result["embedded_string_indicators"]:
+        for indicator in result["embedded_string_indicators"]:
+            offsets = ", ".join(indicator["file_offsets"])
+            lines.append(
+                f"  - {indicator['string']!r} "
+                f"({indicator['category']}, {indicator['severity']}) "
+                f"at {offsets}"
+            )
+    else:
+        lines.append("  - None")
 
     return "\n".join(lines)
 
@@ -565,11 +708,7 @@ def format_markdown_report(result: dict[str, Any]) -> str:
             ),
             (
                 "- **PIE candidate:** "
-                + (
-                    "Yes"
-                    if hardening["pie_candidate"]
-                    else "No"
-                )
+                + ("Yes" if hardening["pie_candidate"] else "No")
             ),
             "",
             "## Analyst Summary",
@@ -614,13 +753,7 @@ def format_markdown_report(result: dict[str, Any]) -> str:
                 f"{indicator['message']}"
             )
 
-    lines.extend(
-        [
-            "",
-            "## Embedded String Indicators",
-            "",
-        ]
-    )
+    lines.extend(["", "## Embedded String Indicators", ""])
 
     string_indicators = result["embedded_string_indicators"]
 
@@ -628,11 +761,14 @@ def format_markdown_report(result: dict[str, Any]) -> str:
         lines.append("- No selected embedded-string indicators detected.")
     else:
         for indicator in string_indicators:
+            offsets = ", ".join(f"`{x}`" for x in indicator["file_offsets"])
             lines.append(
                 f"- **[{indicator['severity']}] "
                 f"{indicator['category']} via string "
                 f"`{indicator['string']}`:** "
-                f"{indicator['message']}"
+                f"{indicator['message']} "
+                f"Match count: {indicator['match_count']}. "
+                f"File offsets: {offsets}."
             )
 
     return "\n".join(lines) + "\n"
@@ -672,6 +808,11 @@ def parse_arguments() -> argparse.Namespace:
         type=Path,
         help="Optional path for a Markdown report.",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show additional details about configuration and matches.",
+    )
     return parser.parse_args()
 
 
@@ -693,7 +834,7 @@ def main() -> int:
         CAPABILITY_MAP, STRING_INDICATOR_MAP = load_indicator_config(
             args.config_path
         )
-        result = analyze_elf(target)
+        result = analyze_elf(target, args.config_path)
     except ValueError as error:
         print(f"Error: {error}", file=sys.stderr)
         return 2
@@ -711,6 +852,10 @@ def main() -> int:
         return 2
 
     print(format_report(result))
+
+    if args.verbose:
+        print("")
+        print(format_verbose_report(result))
 
     if args.json_output:
         args.json_output.parent.mkdir(parents=True, exist_ok=True)
