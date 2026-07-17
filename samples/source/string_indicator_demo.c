@@ -5,8 +5,8 @@ static const char *const review_strings[] = {
     "/proc/self/status",
     "LD_PRELOAD",
     "/bin/sh",
-    "curl",
-    "wget",
+    "CurL",
+    "WgEt",
 };
 
 int main(void) {

@@ -70,27 +70,32 @@
     "/proc/self/status": {
       "severity": "MEDIUM",
       "category": "anti-analysis",
-      "message": "Linux process-status path used in some debugger-detection checks may be present."
+      "message": "Linux process-status path used in some debugger-detection checks may be present.",
+      "case_sensitive": true
     },
     "LD_PRELOAD": {
       "severity": "MEDIUM",
       "category": "dynamic-loading",
-      "message": "Dynamic-loader environment-variable reference may be present."
+      "message": "Dynamic-loader environment-variable reference may be present.",
+      "case_sensitive": true
     },
     "/bin/sh": {
       "severity": "MEDIUM",
       "category": "command-execution",
-      "message": "Embedded shell-path reference may be present."
+      "message": "Embedded shell-path reference may be present.",
+      "case_sensitive": true
     },
     "curl": {
       "severity": "LOW",
       "category": "retrieval-tool",
-      "message": "Reference to a download utility may be present."
+      "message": "Reference to a download utility may be present.",
+      "case_sensitive": false
     },
     "wget": {
       "severity": "LOW",
       "category": "retrieval-tool",
-      "message": "Reference to a download utility may be present."
+      "message": "Reference to a download utility may be present.",
+      "case_sensitive": false
     }
   }
 }

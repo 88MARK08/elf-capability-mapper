@@ -24,7 +24,9 @@ mkdir -p "$OUT_DIR"
 
 "$PYTHON_BIN" "$SCANNER" \
   "$ROOT_DIR/samples/bin/string_indicator_demo" \
-  --json "$OUT_DIR/string_indicator_demo.json" >/dev/null
+  --json "$OUT_DIR/string_indicator_demo.json" \
+  --markdown "$OUT_DIR/string_indicator_demo.md" \
+  --verbose > "$OUT_DIR/string_indicator_verbose.txt"
 
 "$PYTHON_BIN" - \
   "$OUT_DIR/hello.json" \
@@ -69,6 +71,37 @@ actual_string_markers = {
     for indicator in string_demo["embedded_string_indicators"]
 }
 
+if hello["capability_indicators"]:
+    raise SystemExit(
+        "Safe hello fixture unexpectedly produced capability indicators."
+    )
+
+if hello["embedded_string_indicators"]:
+    raise SystemExit(
+        "Safe hello fixture unexpectedly produced string indicators."
+    )
+
+if string_demo["capability_indicators"]:
+    raise SystemExit(
+        "String fixture unexpectedly produced capability indicators."
+    )
+
+if actual_capability_symbols != expected_capability_symbols:
+    missing = sorted(expected_capability_symbols - actual_capability_symbols)
+    unexpected = sorted(actual_capability_symbols - expected_capability_symbols)
+    raise SystemExit(
+        "Capability-indicator mismatch. "
+        f"Missing: {missing}; Unexpected: {unexpected}"
+    )
+
+if actual_string_markers != expected_string_markers:
+    missing = sorted(expected_string_markers - actual_string_markers)
+    unexpected = sorted(actual_string_markers - expected_string_markers)
+    raise SystemExit(
+        "Embedded-string mismatch. "
+        f"Missing: {missing}; Unexpected: {unexpected}"
+    )
+
 expected_summaries = {
     "hello": {
         "import_indicator_count": 0,
@@ -104,42 +137,6 @@ for label, report in (
             f"Expected {expected_summary}; received {actual_summary}"
         )
 
-if hello["capability_indicators"]:
-    raise SystemExit(
-        "Safe hello fixture unexpectedly produced capability indicators."
-    )
-
-if hello["embedded_string_indicators"]:
-    raise SystemExit(
-        "Safe hello fixture unexpectedly produced string indicators."
-    )
-
-if string_demo["capability_indicators"]:
-    raise SystemExit(
-        "String fixture unexpectedly produced capability indicators."
-    )
-
-if actual_capability_symbols != expected_capability_symbols:
-    missing = sorted(expected_capability_symbols - actual_capability_symbols)
-    unexpected = sorted(actual_capability_symbols - expected_capability_symbols)
-    raise SystemExit(
-        "Capability-indicator mismatch. "
-        f"Missing: {missing}; Unexpected: {unexpected}"
-    )
-
-if actual_string_markers != expected_string_markers:
-    missing = sorted(expected_string_markers - actual_string_markers)
-    unexpected = sorted(actual_string_markers - expected_string_markers)
-    raise SystemExit(
-        "Embedded-string mismatch. "
-        f"Missing: {missing}; Unexpected: {unexpected}"
-    )
-
-for label, report in (
-    ("hello", hello),
-    ("capability_demo", demo),
-    ("string_indicator_demo", string_demo),
-):
     hardening = report["hardening"]
 
     if hardening["gnu_relro_segment"] is not True:
@@ -162,17 +159,57 @@ if string_demo["hardening"]["stack_canary_import"] is not False:
         "string_indicator_demo: unexpected stack-canary import."
     )
 
+string_indicators = {
+    indicator["string"]: indicator
+    for indicator in string_demo["embedded_string_indicators"]
+}
+
+for marker, indicator in string_indicators.items():
+    offsets = indicator.get("file_offsets", [])
+
+    if not offsets:
+        raise SystemExit(f"{marker}: expected at least one file offset.")
+
+    if indicator.get("match_count") != len(offsets):
+        raise SystemExit(
+            f"{marker}: match_count does not match file_offsets length."
+        )
+
+    for offset in offsets:
+        if not isinstance(offset, str) or not offset.startswith("0x"):
+            raise SystemExit(
+                f"{marker}: invalid offset format detected: {offset}"
+            )
+
+if string_indicators["curl"]["case_sensitive"] is not False:
+    raise SystemExit("curl should be configured as case-insensitive.")
+
+if string_indicators["wget"]["case_sensitive"] is not False:
+    raise SystemExit("wget should be configured as case-insensitive.")
+
+for marker in {"/proc/self/status", "LD_PRELOAD", "/bin/sh"}:
+    if string_indicators[marker]["case_sensitive"] is not True:
+        raise SystemExit(f"{marker} should be configured as case-sensitive.")
+
 print(
     "Regression assertions passed: safe fixture has 0 indicators; "
     "capability fixture has 10 expected imports; "
-    "string fixture has 5 expected markers; "
+    "string fixture has 5 expected markers with offsets; "
+    "case-insensitive matching works; "
     "hardening signals matched expectations."
 )
 PY
 
 MARKDOWN_REPORT="$OUT_DIR/capability_demo.md"
 
-for required_text in   "# ELF Capability Mapper Report"   "## Hardening Signals"   "## Analyst Summary"   "## Import-Based Capability Indicators"   "## Embedded String Indicators"   "ptrace"   "Static indicators require analyst review and context."
+for required_text in \
+  "# ELF Capability Mapper Report" \
+  "## Hardening Signals" \
+  "## Analyst Summary" \
+  "## Import-Based Capability Indicators" \
+  "## Embedded String Indicators" \
+  "ptrace" \
+  "Static indicators require analyst review and context."
 do
   if ! grep -Fq "$required_text" "$MARKDOWN_REPORT"; then
     echo "Markdown report is missing expected text: $required_text" >&2
@@ -180,7 +217,41 @@ do
   fi
 done
 
+STRING_MARKDOWN_REPORT="$OUT_DIR/string_indicator_demo.md"
+
+for required_text in \
+  "## Embedded String Indicators" \
+  "File offsets:" \
+  "curl" \
+  "wget"
+do
+  if ! grep -Fq "$required_text" "$STRING_MARKDOWN_REPORT"; then
+    echo "String Markdown report is missing expected text: $required_text" >&2
+    exit 1
+  fi
+done
+
 echo "Markdown-report generation test passed."
+
+VERBOSE_REPORT="$OUT_DIR/string_indicator_verbose.txt"
+
+for required_text in \
+  "Verbose Scan Details" \
+  "Symbol indicators loaded: 13" \
+  "String indicators loaded: 5" \
+  "Dynamic imports scanned:" \
+  "Embedded-string indicators matched: 5" \
+  "Matched embedded strings:" \
+  "'curl'" \
+  "'wget'"
+do
+  if ! grep -Fq "$required_text" "$VERBOSE_REPORT"; then
+    echo "Verbose output is missing expected text: $required_text" >&2
+    exit 1
+  fi
+done
+
+echo "Verbose-output test passed."
 
 set +e
 non_elf_output="$("$PYTHON_BIN" "$SCANNER" README.md 2>&1)"
@@ -196,7 +267,6 @@ if [[ "$non_elf_output" != *"not a valid ELF file"* ]]; then
   echo "Expected non-ELF validation message was not found." >&2
   exit 1
 fi
-
 
 INVALID_CONFIG="$ROOT_DIR/tests/fixtures/invalid-indicators.json"
 
@@ -220,5 +290,4 @@ if [[ "$invalid_config_output" != *"is missing: message"* ]]; then
 fi
 
 echo "Malformed configuration rejection test passed."
-
 echo "Regression test passed."
